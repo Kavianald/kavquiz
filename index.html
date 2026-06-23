@@ -433,6 +433,14 @@
       e.preventDefault();
       try { await signOut(auth); } catch(_) {}
     });
+
+    // expose auth so main.js can get ID tokens for saveQuizResult
+    window.__getFirebaseIdToken = async () => {
+      const user = auth.currentUser;
+      if (!user) return null;
+      return user.getIdToken();
+    };
+    window.__getFirebaseUser = () => auth.currentUser;
   </script>
 
   <!-- Your existing app logic -->

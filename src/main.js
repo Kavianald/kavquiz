@@ -391,4 +391,23 @@ function applyGrading(results) {
   summaryEl.parentNode.insertBefore(commentEl, summaryEl.nextSibling);
 
   document.getElementById('btn_new').style.display = 'inline-block';
+
+  // save results to Firebase in the background — don't block the UI
+  saveQuizResult(results, document.getElementById('test_form').questions, totalAwarded, totalMax).catch(console.error);
+}
+
+// ─── Save Quiz Result to Firestore via Netlify function ───────────────
+async function saveQuizResult(results, questions, totalAwarded, totalMax) {
+  const getToken = window.__getFirebaseIdToken;
+  if (!getToken) return;
+  const token = await getToken();
+  if (!token) return;
+
+  await callFunction('saveQuizResult', {
+    idToken: token,
+    score: totalAwarded,
+    maxScore: totalMax,
+    questions,
+    results
+  });
 }

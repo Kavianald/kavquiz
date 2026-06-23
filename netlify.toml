@@ -1,34 +1,13 @@
-functionsDirectory = "C:\\Users\\kavia\\Documents\\KAV Quiz\\netlify\\functions"
-functionsDirectoryOrigin = "config-v1"
-plugins = []
-headers = []
-redirects = []
-
 [build]
-publish = "C:\\Users\\kavia\\Documents\\KAV Quiz"
-publishOrigin = "config"
-functions = "C:\\Users\\kavia\\Documents\\KAV Quiz\\netlify\\functions"
-
-  [build.environment]
-
-  [build.processing]
-
-    [build.processing.css]
-
-    [build.processing.html]
-
-    [build.processing.images]
-
-    [build.processing.js]
-
-  [build.services]
+  functions = "netlify/functions"
 
 [dev]
-functions = "netlify/functions"
+  functions = "netlify/functions"
 
 [functions]
-
   [functions.generateTest]
-  timeout = 240
-
-  [functions."*"]
+    timeout = 240
+  [functions.gradeTest]
+    timeout = 60
+  [functions.saveQuizResult]
+    timeout = 30
