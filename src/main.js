@@ -240,6 +240,7 @@ document.getElementById('btn_new').addEventListener('click', () => {
   document.getElementById('result_summary').textContent = '';
   const oldC = document.getElementById('overall_comment');
   if (oldC) oldC.remove();
+  document.getElementById('save_note')?.remove();
 });
 
 
@@ -403,11 +404,21 @@ async function saveQuizResult(results, questions, totalAwarded, totalMax) {
   const token = await getToken();
   if (!token) return;
 
-  await callFunction('saveQuizResult', {
+  const res = await callFunction('saveQuizResult', {
     idToken: token,
     score: totalAwarded,
     maxScore: totalMax,
     questions,
-    results
+    results,
+    studentResponses: window._lastResponses || {}
   });
+
+  // confirm to the student that this quiz now lives on their dashboard
+  document.getElementById('save_note')?.remove();
+  const note = document.createElement('div');
+  note.id = 'save_note';
+  note.style.cssText = 'text-align:center;margin-top:6px;font-size:.9rem;color:var(--correct)';
+  note.textContent = `✓ Saved to your dashboard — ${res.subject} · ${res.topic} · +${res.xpEarned} XP`;
+  const anchor = document.getElementById('overall_comment') || document.getElementById('result_summary');
+  anchor.insertAdjacentElement('afterend', note);
 }

@@ -1,7 +1,7 @@
 const { OpenAI } = require('openai');
 const { initializeApp, cert, getApps } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
-const { getFirestore } = require('firebase-admin/firestore');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 
 // lazy-init Firebase Admin so cold starts don't re-initialize
 function getAdmin() {
@@ -13,6 +13,11 @@ function getAdmin() {
 }
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// XP awarded server-side so it can't be gamed from the client
+function xpForQuiz(pct) {
+  return 10 + (pct >= 85 ? 15 : 0);
+}
 
 async function detectTopic(questions) {
   const questionTexts = questions.slice(0, 10).map(q => q.question_text).join('\n');
@@ -62,7 +67,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { idToken, score, maxScore, questions, results } = JSON.parse(event.body);
+    const { idToken, score, maxScore, questions, results, studentResponses } = JSON.parse(event.body);
 
     const { auth, db } = getAdmin();
 
@@ -77,14 +82,17 @@ exports.handler = async (event) => {
     ]);
 
     const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+    const xpEarned = xpForQuiz(pct);
+    const nowIso = new Date().toISOString();
 
     const quizData = {
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso,
       subject: topic.subject,
       topic: topic.topic,
       score,
       maxScore,
       pct,
+      xpEarned,
       coachNote,
       questions: questions.map(q => {
         const r = results.find(r => String(r.id) === String(q.id));
@@ -93,6 +101,7 @@ exports.handler = async (event) => {
           question_text: q.question_text,
           question_type: q.question_type,
           correct_answer: q.correct_answer ?? null,
+          student_answer: studentResponses?.[q.id] ?? null,
           status: r?.status ?? 'unknown',
           points_awarded: r?.points_awarded ?? 0,
           max_points: r?.max_points ?? q.max_points,
@@ -101,11 +110,62 @@ exports.handler = async (event) => {
       })
     };
 
-    await db.collection('users').doc(uid).collection('quizResults').add(quizData);
+    const userRef = db.collection('users').doc(uid);
+    const quizRef = userRef.collection('quizResults').doc();
+    const summaryRef = userRef.collection('quizStats').doc('summary');
+
+    // one transaction: save quiz, update the dashboard summary doc, award XP.
+    // The summary doc keeps dashboard loads at 2 reads regardless of quiz count.
+    await db.runTransaction(async (tx) => {
+      const summarySnap = await tx.get(summaryRef);
+      const s = summarySnap.exists
+        ? summarySnap.data()
+        : { totalQuizzes: 0, overallAvgPct: 0, bestPct: 0, bySubject: {}, recent: [] };
+
+      const subj = s.bySubject[topic.subject] || { attempts: 0, avgPct: 0, topics: {} };
+      const t = subj.topics[topic.topic] || { attempts: 0, avgPct: 0, lastPct: 0 };
+
+      t.avgPct = Math.round((t.avgPct * t.attempts + pct) / (t.attempts + 1));
+      t.attempts += 1;
+      t.lastPct = pct;
+      subj.topics[topic.topic] = t;
+
+      subj.avgPct = Math.round((subj.avgPct * subj.attempts + pct) / (subj.attempts + 1));
+      subj.attempts += 1;
+      s.bySubject[topic.subject] = subj;
+
+      s.overallAvgPct = Math.round((s.overallAvgPct * s.totalQuizzes + pct) / (s.totalQuizzes + 1));
+      s.totalQuizzes += 1;
+      s.bestPct = Math.max(s.bestPct || 0, pct);
+      s.lastQuizAt = nowIso;
+      s.latestCoachNote = coachNote;
+      s.recent = [
+        ...(s.recent || []),
+        { date: nowIso, subject: topic.subject, topic: topic.topic, pct, quizId: quizRef.id }
+      ].slice(-15);
+
+      // weak topics: avg below 75, weakest first
+      const weak = [];
+      for (const [subName, sub] of Object.entries(s.bySubject)) {
+        for (const [topName, top] of Object.entries(sub.topics)) {
+          if (top.avgPct < 75) weak.push({ name: topName, subject: subName, avgPct: top.avgPct });
+        }
+      }
+      weak.sort((a, b) => a.avgPct - b.avgPct);
+      s.weakTopics = weak.slice(0, 4);
+
+      tx.set(quizRef, quizData);
+      tx.set(summaryRef, s);
+      tx.set(userRef, { xp: FieldValue.increment(xpEarned), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    });
+
+    await userRef.collection('xpHistory')
+      .add({ delta: xpEarned, reason: 'quiz_completed', createdAt: FieldValue.serverTimestamp() })
+      .catch(() => {});
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ ok: true, subject: topic.subject, topic: topic.topic, coachNote })
+      body: JSON.stringify({ ok: true, subject: topic.subject, topic: topic.topic, coachNote, xpEarned })
     };
   } catch (e) {
     console.error('saveQuizResult error:', e);
