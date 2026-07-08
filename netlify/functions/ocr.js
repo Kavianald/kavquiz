@@ -1,27 +1,15 @@
 // netlify/functions/ocr.js
 
 /**
- * OCR via Google Cloud Vision using a Service Account JSON
+ * OCR via Google Cloud Vision REST API using an API key
  *
  * Expects: { base64PagePNGs: string[] }
  * Returns: { text: string }
  *
- * Requires env var GCP_SERVICE_ACCOUNT containing your service‑account JSON.
+ * Requires env var GCP_VISION_API_KEY (an API key restricted to the
+ * Cloud Vision API). Replaces the old GCP_SERVICE_ACCOUNT JSON, which
+ * pushed the functions' combined env size past Netlify's 4KB limit.
  */
-
-const { ImageAnnotatorClient } = require('@google-cloud/vision');
-
-let client;
-try {
-  const creds = JSON.parse(process.env.GCP_SERVICE_ACCOUNT);
-  client = new ImageAnnotatorClient({
-    credentials: creds,
-    projectId: creds.project_id
-  });
-} catch (e) {
-  console.error('Failed to init Vision client:', e);
-  throw new Error('Vision credentials misconfigured');
-}
 
 exports.handler = async (event) => {
   try {
@@ -30,7 +18,6 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'No pages provided' }) };
     }
 
-    // Build batch request
     const requests = base64PagePNGs.map(dataUrl => {
       const [, b64] = dataUrl.split(',');
       return {
@@ -39,8 +26,22 @@ exports.handler = async (event) => {
       };
     });
 
-    const [response] = await client.batchAnnotateImages({ requests });
-    const fullText = response.responses
+    const res = await fetch(
+      `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GCP_VISION_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests })
+      }
+    );
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Vision API error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const fullText = (data.responses || [])
       .map(r => (r.fullTextAnnotation || {}).text || '')
       .join('\n\n')
       .trim();

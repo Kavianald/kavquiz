@@ -5,7 +5,6 @@
     "start": "npx netlify-cli dev"
   },
   "dependencies": {
-    "@google-cloud/vision": "^5.3.2",
     "firebase-admin": "^14.0.0",
     "openai": "^4.5.0"
   }
