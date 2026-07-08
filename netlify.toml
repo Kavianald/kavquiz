@@ -5,6 +5,7 @@
   functions = "netlify/functions"
 
 [functions]
+  node_bundler = "esbuild"
   [functions.generateTest]
     timeout = 240
   [functions.gradeTest]
