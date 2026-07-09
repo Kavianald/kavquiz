@@ -117,7 +117,18 @@ exports.handler = async (event) => {
     // one transaction: save quiz, update the dashboard summary doc, award XP.
     // The summary doc keeps dashboard loads at 2 reads regardless of quiz count.
     await db.runTransaction(async (tx) => {
-      const summarySnap = await tx.get(summaryRef);
+      const [summarySnap, userSnap] = await Promise.all([tx.get(summaryRef), tx.get(userRef)]);
+
+      // heal partial user docs: if the student quizzed before ever opening
+      // the dashboard, this function created their doc with only xp — the
+      // missing profile fields then break the dashboard's security rules
+      const u = userSnap.exists ? userSnap.data() : {};
+      const heal = {};
+      if (u.email == null && decoded.email) heal.email = decoded.email;
+      if (typeof u.hoursTrained !== 'number') heal.hoursTrained = 0;
+      if (typeof u.xpSpent !== 'number') heal.xpSpent = 0;
+      if (!u.skills) heal.skills = { algebra: 0, factoring: 0, reasoning: 0, wordProblems: 0, effort: 0 };
+      if (!u.createdAt) heal.createdAt = FieldValue.serverTimestamp();
       const s = summarySnap.exists
         ? summarySnap.data()
         : { totalQuizzes: 0, overallAvgPct: 0, bestPct: 0, bySubject: {}, recent: [] };
@@ -156,7 +167,7 @@ exports.handler = async (event) => {
 
       tx.set(quizRef, quizData);
       tx.set(summaryRef, s);
-      tx.set(userRef, { xp: FieldValue.increment(xpEarned), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      tx.set(userRef, { ...heal, xp: FieldValue.increment(xpEarned), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     });
 
     await userRef.collection('xpHistory')
